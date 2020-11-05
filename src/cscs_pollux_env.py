@@ -27,6 +27,17 @@ from novaclient.v2 import servers as nova_servers
 
 class Pollux:
     __env = {}
+    __auth = None
+    __ks_session = None
+    __keystone_client = None
+    __token = None
+    __user_id = None
+    __nova_client = None
+    __server_manager = None
+    __projects = None
+    __project_id = None
+    __scoped = False
+    __server_list = None
 
     def __init__(self):
         self.__env['OS_AUTH_URL'] = os.environ['OS_AUTH_URL'] if 'OS_AUTH_URL' in os.environ else 'https://pollux.cscs.ch:13000/v3'
@@ -65,7 +76,23 @@ class Pollux:
     def get_env(self):
         return self.__env
 
+    def __reset_attributes(self, full=True):
+        if full:
+            __auth = None
+            __ks_session = None
+        __keystone_client = None
+        __token = None
+        __user_id = None
+        __nova_client = None
+        __server_manager = None
+        __projects = None
+        __project_id = None
+        __scoped = False
+        __server_list = None
+
     def connect(self):
+        self.__reset_attributes()
+
         if 'OS_TOKEN' in os.environ:
             # We've already been authenticated. We can just set the right variables
             self.__env['OS_TOKEN'] = os.environ['OS_TOKEN']
@@ -79,21 +106,52 @@ class Pollux:
 
         self.__ks_session = keystone_session.Session(auth=self.__auth)
 
-        print('User info:', self.__env['OS_USERNAME'], self.__ks_session.get_user_id())
-
     def __session_rescope(self):
-        # (Re-)Scope the session
-        self.__auth = v3.Token(auth_url=self.__env['OS_AUTH_URL'], token=self.__ks_session.get_token(), project_id=self.__env['OS_PROJECT_ID'])
-        self.__ks_session = keystone_session.Session(auth=self.__auth)
-        self.__env['OS_TOKEN'] = self.__ks_session.get_token()
+        if self.get_project_id() is not None and self.get_token() is not None:
+            self.__reset_attributes(full=False)
 
-    def __get_nova_client(self):
-        self.__nova_client = nova_client.Client(version=self.__env['OS_COMPUTE_API_VERSION'], session=self.__ks_session, auth_url=self.__env['OS_AUTH_URL'], region_name=self.__env['OS_REGION_NAME'])
+            # (Re-)Scope the session
+            self.__auth = v3.Token(auth_url=self.__env['OS_AUTH_URL'], token=self.get_token(), project_id=self.get_project_id())
+            self.__ks_session = keystone_session.Session(auth=self.__auth)
+            self.get_token()
+            self.__scoped = True
+
+    def get_keystone_client(self):
+        self.__keystone_client = keystone_client.Client(session=self.__ks_session, interface=self.__env['OS_INTERFACE'])
+        return self.__keystone_client
+
+    def get_token(self):
+        if self.__ks_session is not None:
+            self.__token = self.__ks_session.get_token()
+        return self.__token
+
+    def get_project_id(self):
+        if self.__project_id is None and 'OS_PROJECT_ID' in self.__env and self.__env['OS_PROJECT_ID'] is not None:
+            self.__project_id = self.__env['OS_PROJECT_ID']
+        return self.__project_id
+
+    def is_scoped(self):
+        return self.__scoped
+
+    def get_nova_client(self):
+        if self.__nova_client is None and self.__ks_session is not None:
+            self.__nova_client = nova_client.Client(version=self.__env['OS_COMPUTE_API_VERSION'], session=self.__ks_session, auth_url=self.__env['OS_AUTH_URL'], region_name=self.__env['OS_REGION_NAME'])
         return self.__nova_client
 
-    def __get_server_manager(self):
-        self.__server_manager = nova_servers.ServerManager(self.__get_nova_client())
+    def get_user_id(self):
+        if self.__user_id is None and self.__ks_session is not None:
+            self.__user_id = self.__ks_session.get_user_id()
+        return self.__user_id
+
+    def get_server_manager(self):
+        if self.__server_manager is None and self.get_nova_client() is not None:
+            self.__server_manager = nova_servers.ServerManager(self.get_nova_client())
         return self.__server_manager
+
+    def get_project_list(self):
+        if self.__projects is None and self.get_keystone_client() is not None and self.get_user_id() is not None:
+            self.__projects = self.get_keystone_client().projects.list(user=self.get_user_id())
+        return self.__projects
 
     def select_project(self):
         if 'OS_PROJECT_ID' in os.environ:
@@ -101,8 +159,7 @@ class Pollux:
             self.__env['OS_PROJECT_ID'] = os.environ['OS_PROJECT_ID']
         else:
             ### List user's projects:
-            self.__keystone_client = keystone_client.Client(session=self.__ks_session, interface=self.__env['OS_INTERFACE'])
-            projects = self.__keystone_client.projects.list(user=self.__ks_session.get_user_id())
+            projects = self.get_keystone_client().projects.list(user=self.get_user_id())
             if 'OS_PROJECT_NAME' in os.environ:
                 for project in projects:
                     if project.name == os.environ['OS_PROJECT_NAME']:
@@ -127,47 +184,49 @@ class Pollux:
 
         print('Selected project ID: ', self.__env['OS_PROJECT_ID'])
 
-    def __get_server_list(self):
-        server_manager = self.__get_server_manager()
-        server_list = server_manager.list()
-
-        return server_list
+    def get_server_list(self):
+        if self.__server_list is None and self.get_server_manager() is not None:
+            self.__server_list = self.get_server_manager().list()
+        return self.__server_list
 
     def get_server_status_list(self):
-        errors = [{'name': 'Read-only filesystem', 'match': 'Read-only file system'}, {'name': 'IO error', 'match': 'I/O error'}]
-        tail_size = 50
+        servers = None
 
-        servers = []
-        for server in self.__get_server_list():
-            server_dict = {'name': server.name, 'fail': False, 'err': None}
-            #console_url = server.get_console_url('novnc')
-            server_dict['console_output'] = server.get_console_output()
-            lines = server_dict['console_output'].splitlines()
-            i = 0
-            for line in lines:
-                i += 1
-                if not server_dict['fail'] and i > len(lines) - tail_size - 1:
-                    for error in errors:
-                        if not server_dict['fail']:
-                            if line.find(error['match']) != -1:
-                                server_dict['fail'] = True
-                                server_dict['err'] = {'error': error['name'], 'line': i, 'totlines': len(lines)}
+        if self.get_server_list() is not None:
+            errors = [{'name': 'Read-only filesystem', 'match': 'Read-only file system'}, {'name': 'IO error', 'match': 'I/O error'}]
+            tail_size = 50
 
-            if len(server_dict['name']) <= 6:
-                server_dict['msg_spacer'] = "\t\t\t"
-            elif len(server_dict['name']) <= 14:
-                server_dict['msg_spacer'] = "\t\t"
-            else:
-                server_dict['msg_spacer'] = "\t"
+            servers = []
+            for server in self.get_server_list():
+                server_dict = {'server': server, 'name': server.name, 'fail': False, 'err': None}
+                #console_url = server.get_console_url('novnc')
+                server_dict['console_output'] = server.get_console_output()
+                lines = server_dict['console_output'].splitlines()
+                i = 0
+                for line in lines:
+                    i += 1
+                    if not server_dict['fail'] and i > len(lines) - tail_size - 1:
+                        for error in errors:
+                            if not server_dict['fail']:
+                                if line.find(error['match']) != -1:
+                                    server_dict['fail'] = True
+                                    server_dict['err'] = {'error': error['name'], 'line': i, 'totlines': len(lines)}
 
-            if server_dict['err'] is None:
-                server_dict['msg'] = 'OK'
-            else:
-                server_dict['msg'] = 'FAIL: %s (%s/%s)' %(server_dict['err']['error'], server_dict['err']['line'], server_dict['err']['totlines'])
+                if len(server_dict['name']) <= 6:
+                    server_dict['msg_spacer'] = "\t\t\t"
+                elif len(server_dict['name']) <= 14:
+                    server_dict['msg_spacer'] = "\t\t"
+                else:
+                    server_dict['msg_spacer'] = "\t"
 
-            servers.append(server_dict)
+                if server_dict['err'] is None:
+                    server_dict['msg'] = 'OK'
+                else:
+                    server_dict['msg'] = 'FAIL: %s (%s/%s)' %(server_dict['err']['error'], server_dict['err']['line'], server_dict['err']['totlines'])
 
-        if len(servers) == 0:
-            servers = None
+                servers.append(server_dict)
+
+            if len(servers) == 0:
+                servers = None
 
         return servers
