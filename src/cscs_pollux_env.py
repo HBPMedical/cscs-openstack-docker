@@ -193,24 +193,36 @@ class Pollux:
         servers = None
 
         if self.get_server_list() is not None:
-            errors = [{'name': 'Read-only filesystem', 'match': 'Read-only file system'}, {'name': 'IO error', 'match': 'I/O error'}]
+            errors = [{'name': 'Read-only filesystem', 'match': 'Read-only file system'}, {'name': 'IO error', 'match': 'I/O error'}, {'name': 'Unexpected API Error: FileNotFound_Remote', 'match': 'FileNotFound_Remote'}]
             tail_size = 50
 
             servers = []
             for server in self.get_server_list():
                 server_dict = {'server': server, 'name': server.name, 'fail': False, 'err': None}
                 #console_url = server.get_console_url('novnc')
-                server_dict['console_output'] = server.get_console_output()
-                lines = server_dict['console_output'].splitlines()
-                i = 0
-                for line in lines:
-                    i += 1
-                    if not server_dict['fail'] and i > len(lines) - tail_size - 1:
-                        for error in errors:
-                            if not server_dict['fail']:
-                                if line.find(error['match']) != -1:
-                                    server_dict['fail'] = True
-                                    server_dict['err'] = {'error': error['name'], 'line': i, 'totlines': len(lines)}
+                try:
+                    server_dict['console_output'] = server.get_console_output()
+                except Exception as e:
+                    if type(e).__name__ == 'ClientException':
+                        server_dict['fail'] = True
+                        server_dict['err'] = {'error': 'ClientException', 'line': None, 'totlines': None}
+                        server_dict['err']['e'] = e
+                if not server_dict['fail']:
+                    lines = server_dict['console_output'].splitlines()
+                    i = 0
+                    for line in lines:
+                        i += 1
+                        if not server_dict['fail'] and i > len(lines) - tail_size - 1:
+                            for error in errors:
+                                if not server_dict['fail']:
+                                    if line.find(error['match']) != -1:
+                                        server_dict['fail'] = True
+                                        server_dict['err'] = {'error': error['name'], 'line': i, 'totlines': len(lines)}
+                elif server_dict['err'] is not None and server_dict['err']['error'] == 'ClientException':
+                    estr = server_dict['err']['e'].__str__()
+                    for error in errors:
+                        if estr.find(error['match']) != -1:
+                            server_dict['err']['error'] = error['name']
 
                 if len(server_dict['name']) <= 6:
                     server_dict['msg_spacer'] = "\t\t\t"
@@ -222,7 +234,7 @@ class Pollux:
                 if server_dict['err'] is None:
                     server_dict['msg'] = 'OK'
                 else:
-                    server_dict['msg'] = 'FAIL: %s (%s/%s)' %(server_dict['err']['error'], server_dict['err']['line'], server_dict['err']['totlines'])
+                    server_dict['msg'] = 'FAIL: %s (line #%s/%s)' %(server_dict['err']['error'], server_dict['err']['line'], server_dict['err']['totlines'])
 
                 servers.append(server_dict)
 
