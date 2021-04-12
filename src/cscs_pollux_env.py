@@ -21,7 +21,7 @@ import urllib
 from keystoneauth1.identity import v3
 from keystoneauth1 import session as keystone_session
 from keystoneclient.v3 import client as keystone_client
-from keystoneauth1.extras._saml2 import V3Saml2Password
+from keystoneauth1.identity import V3OidcPassword
 import novaclient.client as nova_client
 from novaclient.v2 import servers as nova_servers
 
@@ -43,8 +43,10 @@ class Pollux:
         self.__env['OS_AUTH_URL'] = os.environ['OS_AUTH_URL'] if 'OS_AUTH_URL' in os.environ else 'https://pollux.cscs.ch:13000/v3'
         self.__env['OS_IDENTITY_API_VERSION'] = os.environ['OS_IDENTITY_API_VERSION'] if 'OS_IDENTITY_API_VERSION' in os.environ else '3'
         self.__env['OS_IDENTITY_PROVIDER'] = os.environ['OS_IDENTITY_PROVIDER'] if 'OS_IDENTITY_PROVIDER' in os.environ else 'cscskc'
-        self.__env['OS_IDENTITY_PROVIDER_URL'] = os.environ['OS_IDENTITY_PROVIDER_URL'] if 'OS_IDENTITY_PROVIDER_URL' in os.environ else 'https://auth.cscs.ch/auth/realms/cscs/protocol/saml/'
-        self.__env['OS_PROTOCOL'] = os.environ['OS_PROTOCOL'] if 'OS_PROTOCOL' in os.environ else 'mapped'
+        self.__env['OS_DISCOVERY_ENDPOINT'] = os.environ['OS_DISCOVERY_ENDPOINT'] if 'OS_DISCOVERY_ENDPOINT' in os.environ else 'https://auth.cscs.ch/auth/realms/cscs/.well-known/openid-configuration'
+        self.__env['OS_CLIENT_ID'] = os.environ['OS_CLIENT_ID'] if 'OS_CLIENT_ID' in os.environ else 'pollux-prod'
+        self.__env['OS_CLIENT_SECRET'] = os.environ['OS_CLIENT_SECRET'] if 'OS_CLIENT_SECRET' in os.environ else '82c7a379-f5ee-48c7-8a6b-7ee15557e28e'
+        self.__env['OS_PROTOCOL'] = os.environ['OS_PROTOCOL'] if 'OS_PROTOCOL' in os.environ else 'openid'
         self.__env['OS_INTERFACE'] = os.environ['OS_INTERFACE'] if 'OS_INTERFACE' in os.environ else 'public'
         self.__env['OS_REGION_NAME'] = os.environ['OS_REGION_NAME'] if 'OS_REGION_NAME' in os.environ else 'Pollux'
         self.__env['OS_COMPUTE_API_VERSION'] = os.environ['OS_COMPUTE_API_VERSION'] if 'OS_COMPUTE_API_VERSION' in os.environ else '2.1'
@@ -102,7 +104,7 @@ class Pollux:
             ### Authenticate user:
             self.__env['OS_USERNAME'] = os.environ['OS_USERNAME'] if 'OS_USERNAME' in os.environ else input('Username: ')
             self.__pw = os.environ['OS_PASSWORD'] if 'OS_PASSWORD' in os.environ else getpass.getpass()
-            self.__auth = V3Saml2Password(auth_url=self.__env['OS_AUTH_URL'], identity_provider=self.__env['OS_IDENTITY_PROVIDER'], protocol=self.__env['OS_PROTOCOL'], identity_provider_url=self.__env['OS_IDENTITY_PROVIDER_URL'], username=self.__env['OS_USERNAME'], password=self.__pw)
+            self.__auth = V3OidcPassword(auth_url=self.__env['OS_AUTH_URL'], identity_provider=self.__env['OS_IDENTITY_PROVIDER'], protocol=self.__env['OS_PROTOCOL'], client_id=self.__env['OS_CLIENT_ID'], client_secret=self.__env['OS_CLIENT_SECRET'], discovery_endpoint=self.__env['OS_DISCOVERY_ENDPOINT'], username=self.__env['OS_USERNAME'], password=self.__pw)
 
         self.__ks_session = keystone_session.Session(auth=self.__auth)
 
@@ -193,7 +195,11 @@ class Pollux:
         servers = None
 
         if self.get_server_list() is not None:
-            errors = [{'name': 'Read-only filesystem', 'match': 'Read-only file system'}, {'name': 'IO error', 'match': 'I/O error'}, {'name': 'Unexpected API Error: FileNotFound_Remote', 'match': 'FileNotFound_Remote'}]
+            errors = [
+                        {'name': 'Read-only filesystem', 'match': 'Read-only file system'},
+                        {'name': 'IO error', 'match': 'I/O error'},
+                        {'name': 'Unexpected API Error: FileNotFound_Remote', 'match': 'FileNotFound_Remote'}
+                    ]
             tail_size = 50
 
             servers = []
@@ -205,8 +211,10 @@ class Pollux:
                 except Exception as e:
                     if type(e).__name__ == 'ClientException':
                         server_dict['fail'] = True
-                        server_dict['err'] = {'error': 'ClientException', 'line': None, 'totlines': None}
+                        server_dict['err'] = {'error': type(e).__name__, 'line': None, 'totlines': None}
                         server_dict['err']['e'] = e
+                    elif type(e).__name__ == 'NotFound':
+                        server_dict['console_output'] = ''
                 if not server_dict['fail']:
                     lines = server_dict['console_output'].splitlines()
                     i = 0
@@ -218,7 +226,7 @@ class Pollux:
                                     if line.find(error['match']) != -1:
                                         server_dict['fail'] = True
                                         server_dict['err'] = {'error': error['name'], 'line': i, 'totlines': len(lines)}
-                elif server_dict['err'] is not None and server_dict['err']['error'] == 'ClientException':
+                elif server_dict['err'] is not None and server_dict['err']['error'] in ['ClientException']:
                     estr = server_dict['err']['e'].__str__()
                     for error in errors:
                         if estr.find(error['match']) != -1:
