@@ -3,7 +3,7 @@ FROM ubuntu:latest
 # $ docker build . -t crochat/cscs-pollux:latest -t crochat/cscs-pollux:1.0.4
 # $ docker run --rm -it crochat/cscs-pollux:latest /bin/bash
 # $ docker push crochat/cscs-pollux:latest
-# $ docker push crochat/cscs-pollux:1.0.3
+# $ docker push crochat/cscs-pollux:1.0.4
 
 RUN apt-get update --fix-missing \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
