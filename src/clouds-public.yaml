@@ -1,0 +1,38 @@
+# This is a clouds.yaml file, which can be used by OpenStack tools as a source
+# of configuration on how to connect to a cloud. If this is your only cloud,
+# just put this file in your current directory, ~/.config/openstack/clouds.yaml
+# or in /etc/openstack, and tools like python-openstackclient will just work
+# with no further config. (You will need to add your password to the auth section)
+# Check the different authentication types here:
+# https://docs.openstack.org/keystoneauth/latest/plugin-options.html
+# If you have more than one cloud account, add the cloud entry to the clouds
+# section of your existing file and you can refer to them by name with
+# OS_CLOUD=openstack or --os-cloud=openstack
+global_parameters:
+  auth_type: &auth_type v3oidcpassword
+  auth_url: &auth_url https://pollux.cscs.ch:13000/v3
+  project_domain_name: &project_domain_name federated_domain
+  identity_provider: &identity_provider cscskc
+  protocol: &protocol openid
+  client_id: &client_id pollux-prod
+  client_secret: &client_secret 82c7a379-f5ee-48c7-8a6b-7ee15557e28e
+  discovery_endpoint: &discovery_endpoint https://auth.cscs.ch/auth/realms/cscs/.well-known/openid-configuration
+  identity_api_version: &identity_api_version 3
+
+public-clouds:
+  cscs-pollux-unscoped-token:
+    auth_type: token
+    auth:
+      auth_url: *auth_url
+    identity_api_version: *identity_api_version
+  cscs-pollux:
+    auth_type: *auth_type
+    auth:
+      auth_url: *auth_url
+      identity_provider: *identity_provider
+      protocol: *protocol
+      client_id: *client_id
+      client_secret: *client_secret
+      discovery_endpoint: *discovery_endpoint
+      project_domain_name: *project_domain_name
+    identity_api_version: *identity_api_version
