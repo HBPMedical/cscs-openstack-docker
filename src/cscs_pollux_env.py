@@ -204,7 +204,7 @@ class Pollux:
 
             servers = []
             for server in self.get_server_list():
-                server_dict = {'server': server, 'name': server.name, 'fail': False, 'err': None}
+                server_dict = {'server': server, 'name': server.name, 'fail': False, 'err': None, 'console_output': ''}
                 #console_url = server.get_console_url('novnc')
                 try:
                     server_dict['console_output'] = server.get_console_output()
@@ -213,8 +213,6 @@ class Pollux:
                         server_dict['fail'] = True
                         server_dict['err'] = {'error': type(e).__name__, 'line': None, 'totlines': None}
                         server_dict['err']['e'] = e
-                    elif type(e).__name__ == 'NotFound':
-                        server_dict['console_output'] = ''
                 if not server_dict['fail']:
                     lines = server_dict['console_output'].splitlines()
                     i = 0
